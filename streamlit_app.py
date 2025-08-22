@@ -1,12 +1,13 @@
 import streamlit as st
 from openai import OpenAI
+import time
 
 # Show title and description.
-st.title("💬 Chatbot")
+st.title("💬 AJ ")
 st.write(
-    "This is a simple chatbot that uses OpenAI's GPT-3.5 model to generate responses. "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
-    "You can also learn how to build this app step by step by [following our tutorial](https://docs.streamlit.io/develop/tutorials/llms/build-conversational-apps)."
+    "Hey! Im AJ, the number one assistant on the internet." 
+    " Im here to help you schedule your day and boost your productivity and learning" 
+    " backed by the most recent cognitive science known to man."
 )
 
 # Ask user for their OpenAI API key via `st.text_input`.
@@ -20,37 +21,99 @@ else:
     # Create an OpenAI client.
     client = OpenAI(api_key=openai_api_key)
 
-    # Create a session state variable to store the chat messages. This ensures that the
-    # messages persist across reruns.
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
 
-    # Display the existing chat messages via `st.chat_message`.
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
 
-    # Create a chat input field to allow the user to enter a message. This will display
-    # automatically at the bottom of the page.
-    if prompt := st.chat_input("What is up?"):
+# Use whichever model your assistant was created with
+model = "gpt-4o-mini"
 
-        # Store and display the current prompt.
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+#  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#                        CUSTOMIZE YOUR APP COLOR AND FONT BELOW
+#  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-        # Generate a response using the OpenAI API.
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.messages
-            ],
-            stream=True,
+
+
+# Function to get assistant response
+def get_assistant_response(assistant_id, input_text, thread_id):
+    client.beta.threads.messages.create(
+        thread_id=thread_id,
+        role="user",
+        content=input_text
+    )
+
+    run = client.beta.threads.runs.create(
+        thread_id=thread_id,
+        assistant_id=assistant_id,
+    )
+
+    # Poll until the run is complete
+    while True:
+        run_status = client.beta.threads.runs.retrieve(
+            thread_id=thread_id,
+            run_id=run.id
         )
+        if run_status.status == 'completed':
+            break
+        elif run_status.status in ['failed', 'cancelled', 'expired']:
+            return "⚠️ Sorry, something went wrong.", []
+        time.sleep(1)
 
-        # Stream the response to the chat using `st.write_stream`, then store it in 
-        # session state.
-        with st.chat_message("assistant"):
-            response = st.write_stream(stream)
-        st.session_state.messages.append({"role": "assistant", "content": response})
+    # Get the latest assistant message
+    messages = client.beta.threads.messages.list(
+        thread_id=thread_id,
+        order="desc",
+        limit=1
+    )
+
+    latest_message = messages.data[0]
+    if latest_message.role != "assistant" or latest_message.run_id != run.id:
+        return "⚠️ No valid response.", []
+
+    return latest_message.content[0].text.value, []
+
+
+#  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#                         APP SETUP
+#  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+# Replace with your existing assistant ID (already created via API with vector store & files)
+ASSISTANT_ID = "asst_yOYWNaYjhCzY1BdBq7dkZvCZ"
+
+# Initialize session state
+for key in ['thread_id', 'messages']:
+    if key not in st.session_state:
+        st.session_state[key] = None if key == 'thread_id' else []
+
+# Create thread if not exists
+if st.session_state.thread_id is None:
+    thread = client.beta.threads.create()
+    st.session_state.thread_id = thread.id
+
+# Display conversation history
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+# Chat input
+if user_input := st.chat_input("Ask me anything..."):
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            reply, _ = get_assistant_response(
+                ASSISTANT_ID,
+                user_input,
+                st.session_state.thread_id
+            )
+        st.markdown(reply)
+
+    st.session_state.messages.append({"role": "assistant", "content": reply})
+
+# Clear conversation
+if st.session_state.messages:
+    if st.button("Clear Conversation"):
+        st.session_state.messages = []
+        st.session_state.thread_id = client.beta.threads.create().id
+        st.rerun()
